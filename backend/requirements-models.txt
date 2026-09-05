@@ -1,5 +1,10 @@
 -r requirements.txt
 faster-whisper==1.2.0
 google-genai==1.29.0
-# Optional and intentionally separate due its large PyTorch dependency:
-# speechbrain>=1.0.3
+# Python 3.12-compatible local audio model runtime. setup_windows.ps1 installs the
+# CUDA-enabled PyTorch wheel when one is available, then these requirements.
+torch>=2.6
+torchaudio>=2.6
+speechbrain>=1.1.1
+transformers>=5.16.1
+soundfile>=0.14.0

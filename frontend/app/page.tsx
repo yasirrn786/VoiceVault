@@ -56,9 +56,56 @@ export default function Home() {
   const [challenge, setChallenge] = useState<string | null>(null);
   const [challengeInput, setChallengeInput] = useState('');
   const [incident, setIncident] = useState<Record<string, unknown> | null>(null);
+  const [selectedSpeaker, setSelectedSpeaker] = useState('');
+  const [speakers, setSpeakers] = useState<string[]>([]);
+  const [speakerDialog, setSpeakerDialog] = useState(false);
+  const [debugDialog, setDebugDialog] = useState(false);
+  const [speakerIdInput, setSpeakerIdInput] = useState('');
+  const [enrollmentSeconds, setEnrollmentSeconds] = useState(0);
+  const [enrolling, setEnrolling] = useState(false);
+  const [enrollmentResult, setEnrollmentResult] = useState<string | null>(null);
+  const [debugFile, setDebugFile] = useState<File | null>(null);
+  const [debugResult, setDebugResult] = useState<Record<string, unknown> | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const audioRef = useRef<AudioStreamHandle | null>(null);
+  const enrollmentAudioRef = useRef<AudioStreamHandle | null>(null);
+  const enrollmentChunksRef = useRef<ArrayBuffer[]>([]);
 
+  const loadSpeakers = useCallback(async () => {
+    try { const response = await fetch(`${API_URL}/api/speakers`); if (response.ok) setSpeakers((await response.json()).speakers || []); }
+    catch { /* Backend may not be running yet. */ }
+  }, []);
+
+  useEffect(() => { void loadSpeakers(); }, [loadSpeakers]);
+
+  const startEnrollment = useCallback(async () => {
+    setError(null); setEnrollmentResult(null); setEnrollmentSeconds(0); enrollmentChunksRef.current = [];
+    try {
+      enrollmentAudioRef.current = await startPcmStream((chunk) => { enrollmentChunksRef.current.push(chunk.slice(0)); setEnrollmentSeconds((seconds) => seconds + 2); });
+      setEnrolling(true);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Microphone start failed.'); }
+  }, []);
+
+  const finishEnrollment = useCallback(async () => {
+    await enrollmentAudioRef.current?.stop(); enrollmentAudioRef.current = null; setEnrolling(false);
+    if (!speakerIdInput.trim()) { setError('Enter a trusted speaker name or ID first.'); return; }
+    if (enrollmentSeconds < 14) { setError('Record at least 15 seconds for a usable speaker enrollment.'); return; }
+    const total = enrollmentChunksRef.current.reduce((size, item) => size + item.byteLength, 0);
+    const joined = new Uint8Array(total); let offset = 0;
+    enrollmentChunksRef.current.forEach((item) => { joined.set(new Uint8Array(item), offset); offset += item.byteLength; });
+    try {
+      const form = new FormData(); form.append('speaker_id', speakerIdInput.trim()); form.append('audio', new Blob([joined], { type: 'application/octet-stream' }), 'enrollment.pcm');
+      const response = await fetch(`${API_URL}/api/enroll-speaker`, { method: 'POST', body: form });
+      const result = await response.json(); if (!response.ok) throw new Error(result.detail || 'Enrollment failed.');
+      setEnrollmentResult(`Stored with ${result.model}. Select this identity for later live analysis.`); setSelectedSpeaker(speakerIdInput.trim()); await loadSpeakers();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Enrollment failed.'); }
+  }, [enrollmentSeconds, loadSpeakers, speakerIdInput]);
+
+  const runDeepfakeDebug = useCallback(async () => {
+    if (!debugFile) { setError('Choose a WAV or decodable MP3 file first.'); return; }
+    try { const form = new FormData(); form.append('audio', debugFile); const response = await fetch(`${API_URL}/api/debug/deepfake`, { method: 'POST', body: form }); const result = await response.json(); if (!response.ok) throw new Error(result.detail || 'Debug analysis failed.'); setDebugResult(result); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'Debug analysis failed.'); }
+  }, [debugFile]);
   useEffect(() => {
     if (!live) return;
     const timer = window.setInterval(() => setElapsed((value) => value + 1), 1000);
@@ -103,11 +150,12 @@ export default function Home() {
     setBusy(true); setError(null);
     try {
       const socket = await connect();
+      if (selectedSpeaker) socket.send(JSON.stringify({ type: 'configure', speaker_id: selectedSpeaker }));
       audioRef.current = await startPcmStream((chunk) => { if (socket.readyState === WebSocket.OPEN) socket.send(chunk); });
       setLive(true);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Microphone start failed.'); }
     finally { setBusy(false); }
-  }, [connect]);
+  }, [connect, selectedSpeaker]);
 
   const stop = useCallback(async () => {
     await audioRef.current?.stop(); audioRef.current = null;
@@ -132,7 +180,7 @@ export default function Home() {
   const startChallenge = useCallback(async () => {
     try { const socket = await connect(); socket.send(JSON.stringify({ type: 'challenge' })); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Challenge failed.'); }
-  }, [connect]);
+  }, [connect, selectedSpeaker]);
 
   const submitChallenge = useCallback(async () => {
     await analyzeManual(challengeInput); setChallenge(null);
@@ -173,7 +221,7 @@ export default function Home() {
         <div className="flex h-full flex-col">
           <div className="flex items-center gap-3 px-2 py-2"><Logo /><div><div className="text-base font-bold tracking-wide">V.O.I.C.E.</div><div className="text-[11px] uppercase tracking-[.16em] text-purple-400">Security Vault</div></div></div>
           <nav className="mt-7 flex gap-2 overflow-x-auto lg:flex-col" aria-label="Primary navigation">
-            <NavItem active icon={<Gauge />} label="Live Dashboard" /><NavItem icon={<Radar />} label="Threat Monitoring" /><NavItem icon={<FileWarning />} label="Incident Vault" /><NavItem icon={<Fingerprint />} label="Speaker Identity" />
+            <NavItem active icon={<Gauge />} label="Live Dashboard" /><NavItem icon={<Radar />} label="Threat Monitoring" /><NavItem icon={<FileWarning />} label="Incident Vault" /><NavItem icon={<Fingerprint />} label="Speaker Identity" onClick={() => setSpeakerDialog(true)} />
           </nav>
           <div className="mt-auto hidden space-y-3 border-t border-white/5 pt-5 lg:block">
             <div className="rounded-lg bg-[#141026] p-3 text-xs leading-5 text-[#8d87a3]"><span className="mb-1 block font-semibold text-emerald-400">PRIVACY MODE: ON</span>Raw microphone audio is processed transiently and not retained.</div>
@@ -187,7 +235,7 @@ export default function Home() {
           <div className="mx-auto flex max-w-[1540px] flex-wrap items-center justify-between gap-4">
             <div><p className="text-xs text-[#8d87a3]">Command Center / Live Analysis</p><h1 className="mt-1 text-2xl font-semibold">Zero-Trust Voice Gateway</h1></div>
             <div className="flex flex-wrap items-center gap-3">
-              <span className={`status-pill ${live ? 'online' : ''}`}><span className="status-dot" />{live ? 'LIVE ANALYSIS' : 'SYSTEM READY'}</span>
+              <select aria-label="Claimed trusted speaker" value={selectedSpeaker} onChange={(event) => setSelectedSpeaker(event.target.value)} className="rounded-full border border-white/10 bg-[#141026] px-3 py-2 text-xs text-slate-200"><option value="">Claimed speaker: none</option>{speakers.map((speaker) => <option key={speaker} value={speaker}>{speaker}</option>)}</select><span className={`status-pill ${live ? 'online' : ''}`}><span className="status-dot" />{live ? 'LIVE ANALYSIS' : 'SYSTEM READY'}</span>
               <span className="rounded-full border border-white/8 bg-[#141026] px-4 py-2 font-mono text-xs text-[#8d87a3]">{sessionId ? `ID ${sessionId.toUpperCase()}` : 'NO SESSION'} · {formatTime(elapsed)}</span>
             </div>
           </div>
@@ -206,7 +254,7 @@ export default function Home() {
             <Card>
               <div className="section-heading"><div><p className="eyebrow">VOICE CHANNEL</p><h2>Live activity monitor</h2></div><span className={`flex items-center gap-2 text-xs font-semibold ${live ? 'text-emerald-400' : 'text-[#8d87a3]'}`}><span className={`size-2 rounded-full ${live ? 'animate-pulse bg-emerald-400 shadow-[0_0_8px_#22c55e]' : 'bg-slate-600'}`} />{live ? 'LISTENING' : 'IDLE'}</span></div>
               <Waveform active={live} />
-              <div className="mt-4 flex flex-wrap gap-2"><Button onClick={live ? stop : start} disabled={busy} className={live ? 'bg-red-500 text-white hover:bg-red-400' : 'bg-purple-500 text-white hover:bg-purple-400'}>{live ? <><CircleStop /> Stop Analysis</> : <><Mic /> {busy ? 'Connecting…' : 'Start Analysis'}</>}</Button><Button variant="outline" onClick={startChallenge} className="border-purple-500/30 bg-transparent text-purple-200 hover:bg-purple-500/10"><LockKeyhole /> Challenge Caller</Button><Button variant="outline" onClick={createIncident} className="border-white/10 bg-transparent text-slate-200"><FileWarning /> Create Incident</Button><Button variant="ghost" onClick={reset} className="text-[#8d87a3]"><RefreshCw /> Reset</Button></div>
+              <div className="mt-4 flex flex-wrap gap-2"><Button onClick={live ? stop : start} disabled={busy} className={live ? 'bg-red-500 text-white hover:bg-red-400' : 'bg-purple-500 text-white hover:bg-purple-400'}>{live ? <><CircleStop /> Stop Analysis</> : <><Mic /> {busy ? 'Connecting…' : 'Start Analysis'}</>}</Button><Button variant="outline" onClick={startChallenge} className="border-purple-500/30 bg-transparent text-purple-200 hover:bg-purple-500/10"><LockKeyhole /> Challenge Caller</Button><Button variant="outline" onClick={createIncident} className="border-white/10 bg-transparent text-slate-200"><FileWarning /> Create Incident</Button><Button variant="outline" onClick={() => setDebugDialog(true)} className="border-white/10 bg-transparent text-slate-200"><TerminalSquare /> Test audio</Button><Button variant="ghost" onClick={reset} className="text-[#8d87a3]"><RefreshCw /> Reset</Button></div>
             </Card>
           </section>
 
@@ -248,14 +296,15 @@ export default function Home() {
         </div>
       </main>
 
-      <Dialog open={Boolean(challenge)} onOpenChange={(open) => !open && setChallenge(null)}><DialogContent className="border border-purple-500/25 bg-[#140e2b] text-white sm:max-w-md"><DialogHeader><DialogTitle>Active caller challenge</DialogTitle><DialogDescription>This phrase is additional evidence—not a guarantee of liveness. Ask the caller to repeat it exactly.</DialogDescription></DialogHeader><div className="rounded-lg border border-purple-500/30 bg-[#090518] p-5 text-center font-mono text-2xl tracking-[.16em] text-purple-300">{challenge}</div><Input value={challengeInput} onChange={(event) => setChallengeInput(event.target.value)} placeholder="Transcribed or typed response" className="border-[#2e235c] bg-[#0b071a]" /><DialogFooter><Button onClick={submitChallenge} disabled={!challengeInput.trim()} className="bg-purple-500 hover:bg-purple-400">Verify response</Button></DialogFooter></DialogContent></Dialog>
+      <Dialog open={speakerDialog} onOpenChange={setSpeakerDialog}><DialogContent className="border border-purple-500/25 bg-[#140e2b] text-white sm:max-w-lg"><DialogHeader><DialogTitle>Speaker Identity</DialogTitle><DialogDescription>Add a trusted speaker with approximately 15–30 seconds of clear speech. The ECAPA threshold is configurable and is not presented as calibrated.</DialogDescription></DialogHeader><Input value={speakerIdInput} onChange={(event) => setSpeakerIdInput(event.target.value)} placeholder="Name or trusted speaker ID" className="border-[#2e235c] bg-[#0b071a]" /><p className="text-sm text-purple-200">Recorded: {enrollmentSeconds}s / 15–30s recommended</p>{enrollmentResult && <p className="rounded bg-emerald-500/10 p-3 text-sm text-emerald-300">{enrollmentResult}</p>}<DialogFooter>{enrolling ? <Button onClick={finishEnrollment} className="bg-red-500 hover:bg-red-400"><CircleStop /> Stop & enroll</Button> : <Button onClick={startEnrollment} className="bg-purple-500 hover:bg-purple-400"><Mic /> Record trusted speaker</Button>}</DialogFooter></DialogContent></Dialog>
+      <Dialog open={debugDialog} onOpenChange={setDebugDialog}><DialogContent className="border border-purple-500/25 bg-[#140e2b] text-white sm:max-w-lg"><DialogHeader><DialogTitle>Deepfake model test</DialogTitle><DialogDescription>Runs the configured local classifier on this file. Output is a model result, not a scientific accuracy measurement.</DialogDescription></DialogHeader><Input type="file" accept="audio/wav,audio/mpeg,.wav,.mp3" onChange={(event) => setDebugFile(event.target.files?.[0] || null)} className="border-[#2e235c] bg-[#0b071a]" />{debugResult && <pre className="max-h-64 overflow-auto rounded bg-[#090518] p-3 text-xs text-purple-200">{JSON.stringify(debugResult, null, 2)}</pre>}<DialogFooter><Button onClick={runDeepfakeDebug} className="bg-purple-500 hover:bg-purple-400">Run local model</Button></DialogFooter></DialogContent></Dialog>      <Dialog open={Boolean(challenge)} onOpenChange={(open) => !open && setChallenge(null)}><DialogContent className="border border-purple-500/25 bg-[#140e2b] text-white sm:max-w-md"><DialogHeader><DialogTitle>Active caller challenge</DialogTitle><DialogDescription>This phrase is additional evidence—not a guarantee of liveness. Ask the caller to repeat it exactly.</DialogDescription></DialogHeader><div className="rounded-lg border border-purple-500/30 bg-[#090518] p-5 text-center font-mono text-2xl tracking-[.16em] text-purple-300">{challenge}</div><Input value={challengeInput} onChange={(event) => setChallengeInput(event.target.value)} placeholder="Transcribed or typed response" className="border-[#2e235c] bg-[#0b071a]" /><DialogFooter><Button onClick={submitChallenge} disabled={!challengeInput.trim()} className="bg-purple-500 hover:bg-purple-400">Verify response</Button></DialogFooter></DialogContent></Dialog>
       <Dialog open={Boolean(incident)} onOpenChange={(open) => !open && setIncident(null)}><DialogContent className="max-h-[85vh] overflow-auto border border-purple-500/25 bg-[#140e2b] text-white sm:max-w-2xl"><DialogHeader><DialogTitle>Incident report created</DialogTitle><DialogDescription>Tamper-evident security metadata was stored locally. Raw audio was not included.</DialogDescription></DialogHeader><pre className="overflow-auto rounded-lg bg-[#090518] p-4 text-xs leading-5 text-purple-200">{JSON.stringify(incident, null, 2)}</pre></DialogContent></Dialog>
     </div>
   );
 }
 
 function Logo() { return <div className="grid size-10 place-items-center bg-gradient-to-br from-purple-500 to-indigo-500 [clip-path:polygon(50%_0%,100%_25%,100%_75%,50%_100%,0%_75%,0%_25%)]"><AudioLines className="size-5 text-white" /></div>; }
-function NavItem({ icon, label, active = false }: { icon: React.ReactNode; label: string; active?: boolean }) { return <button className={`flex shrink-0 items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium transition lg:w-full ${active ? 'bg-purple-500/15 text-white shadow-[inset_0_0_12px_rgba(168,85,247,.08)]' : 'text-[#8d87a3] hover:bg-white/3 hover:text-white'}`}>{icon}<span>{label}</span></button>; }
+function NavItem({ icon, label, active = false, onClick }: { icon: React.ReactNode; label: string; active?: boolean; onClick?: () => void }) { return <button onClick={onClick} className={`flex shrink-0 items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium transition lg:w-full ${active ? 'bg-purple-500/15 text-white shadow-[inset_0_0_12px_rgba(168,85,247,.08)]' : 'text-[#8d87a3] hover:bg-white/3 hover:text-white'}`}>{icon}<span>{label}</span></button>; }
 function Card({ children }: { children: React.ReactNode }) { return <section className="rounded-xl border border-white/[.055] bg-[#0e0a1a] p-5 shadow-[0_18px_50px_rgba(0,0,0,.14)]">{children}</section>; }
 function Metric({ label, value, tone }: { label: string; value: string; tone?: 'danger' | 'warning' | 'good' }) { return <div><span className="block text-[10px] tracking-widest text-[#6d6785]">{label}</span><strong className={`mt-1 block text-sm ${tone === 'danger' ? 'text-red-400' : tone === 'warning' ? 'text-amber-300' : tone === 'good' ? 'text-emerald-400' : 'text-white'}`}>{value}</strong></div>; }
 function RiskCard({ label, value, special }: { label: string; value: number | null; special?: string }) { const display = value === null ? 'UNKNOWN' : special === 'QUALITY' ? `${Math.round(value*100)}%` : `${Math.round(value*100)}%`; const tone = value !== null && (special === 'QUALITY' ? value < .55 : value > .65) ? 'red' : value !== null && (special === 'QUALITY' ? value < .8 : value > .35) ? 'amber' : 'purple'; return <div className="rounded-lg border border-white/[.055] bg-[#0e0a1a] p-4"><div className="mb-3 min-h-8 text-[11px] uppercase leading-4 tracking-[.08em] text-[#8d87a3]">{label}</div><div className={`text-xl font-bold ${tone === 'red' ? 'text-red-400' : tone === 'amber' ? 'text-amber-300' : 'text-purple-300'}`}>{display}</div><Progress value={value === null ? 0 : value * 100} className={`mt-3 h-1 bg-[#241a3d] ${tone === 'red' ? '[&_[data-slot=progress-indicator]]:bg-red-500' : tone === 'amber' ? '[&_[data-slot=progress-indicator]]:bg-amber-400' : '[&_[data-slot=progress-indicator]]:bg-purple-500'}`} /></div>; }

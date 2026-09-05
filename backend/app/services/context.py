@@ -56,6 +56,7 @@ def analyze_context(transcript: str) -> ContextAnalysis:
     beneficiary = _hit(text, ["beneficiary"])
     authority = _hit(text, ["authority"])
     bank = _hit(text, ["bank"])
+    kyc = _hit(text, ["kyc"])
     amount, currency = _amount(text)
 
     identity = None
@@ -73,6 +74,7 @@ def analyze_context(transcript: str) -> ContextAnalysis:
     def add(event: str, severity: str, confidence: float) -> None:
         events.append({"event": event, "severity": severity, "confidence": confidence, "source": "context_engine"})
     if authority or bank: add("AUTHORITY_CLAIM", "MEDIUM", .88)
+    if kyc: add("KYC_PRETEXT", "HIGH", .90)
     if urgency: add("URGENCY_DETECTED", "HIGH", urgency)
     if secrecy: add("SECRECY_REQUEST", "HIGH", secrecy)
     if fear: add("THREAT_COERCION", "HIGH", fear)

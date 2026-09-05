@@ -25,8 +25,19 @@ class Settings:
     whisper_model: str = os.getenv("WHISPER_MODEL", "base.en")
     whisper_device: str = os.getenv("WHISPER_DEVICE", "cpu")
     whisper_compute_type: str = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
+    deepfake_model: str = os.getenv(
+        "DEEPFAKE_MODEL", "garystafford/wav2vec2-deepfake-voice-detector"
+    )
+    deepfake_device: str = os.getenv("DEEPFAKE_DEVICE", "auto")
+    deepfake_threshold: float = _float("DEEPFAKE_THRESHOLD", 0.50)
+    speaker_model: str = os.getenv(
+        "SPEAKER_MODEL", "speechbrain/spkrec-ecapa-voxceleb"
+    )
+    speaker_device: str = os.getenv("SPEAKER_DEVICE", "auto")
     gemini_api_key: str | None = os.getenv("GEMINI_API_KEY")
     speaker_threshold: float = _float("SPEAKER_SIMILARITY_THRESHOLD", 0.70)
+    audio_window_seconds: float = _float("AUDIO_WINDOW_SECONDS", 3.0)
+    audio_buffer_max_seconds: float = _float("AUDIO_BUFFER_MAX_SECONDS", 6.0)
     smoothing_alpha: float = _float("TRUST_SMOOTHING_ALPHA", 0.45)
     unknown_penalty: float = _float("UNKNOWN_SIGNAL_PENALTY", 0.12)
     high_value_inr: float = _float("HIGH_VALUE_INR", 100000)

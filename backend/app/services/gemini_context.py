@@ -38,7 +38,7 @@ class ContextEngine:
             self.health = "ONLINE"
             return ContextAnalysis.model_validate(merged)
         except Exception:
-            self.health = "OFFLINE"
+            self.health = "UNAVAILABLE"
             logger.exception("Gemini enhancement failed; using deterministic context rules")
             return fallback
 

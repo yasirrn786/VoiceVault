@@ -4,6 +4,7 @@ import logging
 import os
 import tempfile
 from threading import Lock
+
 from app.config import settings
 from app.services.audio import pcm_to_wav
 
@@ -14,11 +15,22 @@ class Transcriber:
     def __init__(self) -> None:
         self.model = None
         self.error: str | None = None
+        self.device = "unresolved"
         self._lock = Lock()
 
     @property
     def health(self) -> str:
         return "ONLINE" if self.model is not None else "DEGRADED" if self.error else "STANDBY"
+
+    def _requested_device(self) -> str:
+        requested = settings.whisper_device.strip().lower()
+        if requested != "auto":
+            return requested
+        try:
+            import torch
+            return "cuda" if torch.cuda.is_available() else "cpu"
+        except Exception:
+            return "cpu"
 
     def _load(self) -> None:
         if self.model is not None or self.error:
@@ -28,9 +40,25 @@ class Transcriber:
                 return
             try:
                 from faster_whisper import WhisperModel
-                self.model = WhisperModel(settings.whisper_model, device=settings.whisper_device, compute_type=settings.whisper_compute_type)
-                logger.info("Loaded faster-whisper model %s", settings.whisper_model)
+                self.device = self._requested_device()
+                compute_type = settings.whisper_compute_type
+                if self.device == "cuda" and compute_type in {"", "auto", "int8"}:
+                    compute_type = "float16"
+                if self.device == "cpu" and compute_type in {"", "auto"}:
+                    compute_type = "int8"
+                self.model = WhisperModel(settings.whisper_model, device=self.device, compute_type=compute_type)
+                logger.info("Loaded faster-whisper model %s on %s (%s)", settings.whisper_model, self.device, compute_type)
             except Exception as exc:
+                # Do not crash startup. A configured CUDA path gets one safe CPU retry.
+                if self.device == "cuda":
+                    try:
+                        from faster_whisper import WhisperModel
+                        self.device = "cpu"
+                        self.model = WhisperModel(settings.whisper_model, device="cpu", compute_type="int8")
+                        logger.warning("Whisper CUDA unavailable; loaded CPU fallback")
+                        return
+                    except Exception:
+                        pass
                 self.error = f"{type(exc).__name__}: {exc}"
                 logger.exception("faster-whisper unavailable")
 
@@ -41,9 +69,11 @@ class Transcriber:
         path = ""
         try:
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as handle:
-                handle.write(pcm_to_wav(audio)); path = handle.name
-            segments, info = self.model.transcribe(path, language="en", vad_filter=True, beam_size=1)
-            items = list(segments)
+                handle.write(pcm_to_wav(audio))
+                path = handle.name
+            with self._lock:
+                segments, info = self.model.transcribe(path, language="en", vad_filter=True, beam_size=1)
+                items = list(segments)
             text = " ".join(item.text.strip() for item in items).strip()
             avg_logprob = sum(item.avg_logprob for item in items) / len(items) if items else -5.0
             confidence = max(0.0, min(1.0, 1.0 + avg_logprob / 5.0))
@@ -53,8 +83,10 @@ class Transcriber:
             return {"text": "", "language": "en", "confidence": 0.0, "status": "error"}
         finally:
             if path:
-                try: os.unlink(path)
-                except OSError: pass
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
 
 
 transcriber = Transcriber()
