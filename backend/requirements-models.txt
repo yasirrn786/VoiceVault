@@ -1,0 +1,5 @@
+-r requirements.txt
+faster-whisper==1.2.0
+google-genai==1.29.0
+# Optional and intentionally separate due its large PyTorch dependency:
+# speechbrain>=1.0.3

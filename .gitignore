@@ -1,0 +1,12 @@
+.env
+backend/.env
+frontend/.env.local
+backend/.venv/
+frontend/node_modules/
+frontend/dist/
+frontend/.vinext/
+__pycache__/
+.pytest_cache/
+*.pyc
+backend/data/incidents/*.json
+backend/data/embeddings/*.json
