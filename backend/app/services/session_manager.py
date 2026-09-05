@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 
 from app.config import settings
 from app.models.deepfake import deepfake_detector
+from app.models.aasist import aasist_detector
+from app.models.antispoof_ensemble import fuse_antispoof
 from app.models.liveness import liveness_detector
 from app.models.speaker import speaker_verifier
 from app.schemas.event import SecurityEvent
@@ -65,6 +67,7 @@ class SessionManager:
 
     async def analyze_audio(self, session_id: str, audio: bytes, speaker_id: str | None = None) -> AnalysisUpdate | None:
         """Accept chunks continuously, returning an update only for a fresh model window."""
+        pipeline_started = time.perf_counter()
         runtime = self.get_or_create(session_id)
         runtime.audio_buffer.append(audio)
         window = runtime.audio_buffer.take_window()
@@ -76,19 +79,24 @@ class SessionManager:
         if quality.status == "poor":
             transcript = {"text": "", "language": "en", "confidence": 0.0, "status": "signal_degraded"}
             deepfake = deepfake_detector.analyze(window, quality_good=False)
+            aasist = aasist_detector.analyze(window, quality_good=False)
             speaker = {"speaker_similarity": None, "speaker_match": "unknown", "model": speaker_verifier.model_name}
         else:
             transcription_task = asyncio.to_thread(transcriber.transcribe_pcm, window)
             deepfake_task = asyncio.to_thread(deepfake_detector.analyze, window, True)
+            aasist_task = asyncio.to_thread(aasist_detector.analyze, window, True)
             speaker_task = asyncio.to_thread(speaker_verifier.verify, speaker_id, window)
-            transcript, deepfake, speaker = await asyncio.gather(
-                transcription_task, deepfake_task, speaker_task
+            transcript, deepfake, aasist, speaker = await asyncio.gather(
+                transcription_task, deepfake_task, aasist_task, speaker_task
             )
+        ensemble = fuse_antispoof(deepfake, aasist)
         liveness = liveness_detector.analyze(window)
-        return await self._analyze(
+        update = await self._analyze(
             runtime, str(transcript.get("text", "")), elapsed, quality, transcript,
-            deepfake, speaker, liveness,
+            deepfake, aasist, ensemble, speaker, liveness,
         )
+        update.signals["pipeline_latency_ms"] = round((time.perf_counter()-pipeline_started)*1000, 2)
+        return update
 
     async def analyze_text(self, transcript: str, session_id: str | None = None) -> AnalysisUpdate:
         runtime = self.get_or_create(session_id)
@@ -99,11 +107,12 @@ class SessionManager:
             "status": "unavailable", "model": deepfake_detector.model_name, "latency_ms": 0,
         }
         unknown_speaker = {"speaker_similarity": None, "speaker_match": "unknown", "model": speaker_verifier.model_name}
-        return await self._analyze(runtime, transcript, elapsed, None, transcription, unknown_deepfake, unknown_speaker, liveness_detector.analyze(b""))
+        unknown_aasist = {"synthetic_score": None, "label": "unknown", "status": "unavailable", "model": aasist_detector.model_name}
+        return await self._analyze(runtime, transcript, elapsed, None, transcription, unknown_deepfake, unknown_aasist, fuse_antispoof(unknown_deepfake, unknown_aasist), unknown_speaker, liveness_detector.analyze(b""))
 
     async def _analyze(
         self, runtime: RuntimeSession, text: str, elapsed: float, quality, transcript: dict[str, object],
-        deepfake: dict[str, object], speaker: dict[str, object], liveness: dict[str, object],
+        deepfake: dict[str, object], aasist: dict[str, object], ensemble: dict[str, object], speaker: dict[str, object], liveness: dict[str, object],
     ) -> AnalysisUpdate:
         context = await context_engine.analyze(text) if text else ContextAnalysis(context_risk=0, action_risk=0)
         if text:
@@ -121,7 +130,7 @@ class SessionManager:
         elif challenge_passed is True and anomaly is None:
             anomaly = 0.0
         signals = {
-            "deepfake_risk": deepfake["synthetic_score"],
+            "deepfake_risk": ensemble["synthetic_score"],
             "identity_mismatch": mismatch,
             "liveness_risk": liveness["liveness_risk"],
             "context_risk": context.context_risk,
@@ -144,7 +153,7 @@ class SessionManager:
             runtime.state.attack_state["amount"] = context.amount
         runtime.state.attack_state["model_versions"] = {
             "whisper": settings_name(), "deepfake": deepfake["model"],
-            "speaker": speaker["model"], "liveness": liveness["model"],
+            "aasist": aasist["model"], "speaker": speaker["model"], "liveness": liveness["model"],
         }
 
         new_events: list[SecurityEvent] = []
@@ -168,15 +177,33 @@ class SessionManager:
         if challenge_passed is not None:
             append_event(SecurityEvent(event="CHALLENGE_PASSED" if challenge_passed else "CHALLENGE_FAILED", timestamp=round(elapsed, 2), severity="INFO" if challenge_passed else "HIGH", confidence=float(transcript.get("confidence", 0)), source="active_challenge", session_id=runtime.state.session_id))
 
+        reason_map = {
+            "AUTHORITY_CLAIM": "Caller claimed institutional or official authority",
+            "KYC_PRETEXT": "KYC pretext detected",
+            "URGENCY_DETECTED": "Urgency detected",
+            "SECRECY_REQUEST": "Secrecy request detected",
+            "OTP_REQUEST": "Verification-code request detected",
+            "FINANCIAL_REQUEST": "Payment or transfer request detected",
+            "REMOTE_ACCESS_REQUEST": "Remote-access request detected",
+        }
+        decision_reasons: list[str] = []
+        if speaker.get("speaker_match") is False: decision_reasons.append("Speaker does not match enrolled identity")
+        if ensemble.get("classification") == "synthetic": decision_reasons.append("Synthetic-voice evidence is high")
+        if ensemble.get("classification") == "disagreement": decision_reasons.append("Anti-spoof detectors disagree; verification is required")
+        for event in new_events:
+            if event.event in reason_map and reason_map[event.event] not in decision_reasons: decision_reasons.append(reason_map[event.event])
+        if attack: decision_reasons.append(f"{attack} attack chain identified")
+
         public_signals = {
-            "synthetic_voice_risk": deepfake, "speaker": speaker, "liveness": liveness,
+            "synthetic_voice_risk": deepfake, "aasist": aasist, "antispoof_ensemble": ensemble, "speaker": speaker, "liveness": liveness,
             "audio_quality": None if quality is None else quality.__dict__,
             "context_risk": context.context_risk, "action_risk": context.action_risk,
+            "decision_reasons": decision_reasons,
         }
         return AnalysisUpdate(session_id=runtime.state.session_id, timestamp=round(elapsed, 2), transcript=transcript, context=context,
             signals=public_signals, trust_score=result.trust_score, risk_score=result.risk_score, trust_band=result.band,
             policy_decision=policy.decision, policy_reasons=policy.reasons, attack_chain=attack, events=new_events,
-            model_health={"Whisper": transcriber.health, "Deepfake": deepfake_detector.health, "Speaker": speaker_verifier.health, "Liveness": liveness_detector.health, "Gemini": context_engine.health})
+            model_health={"Whisper": transcriber.health, "Wav2Vec2": deepfake_detector.health, "AASIST": aasist_detector.health, "ECAPA": speaker_verifier.health, "Liveness": liveness_detector.health, "Gemini": context_engine.health})
 
 
 def settings_name() -> str:

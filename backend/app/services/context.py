@@ -10,13 +10,17 @@ PATTERNS: dict[str, tuple[str, ...]] = {
     "secrecy": (r"\bconfidential\b", r"don'?t (?:tell|contact|inform)", r"\bdo not (?:tell|contact|inform)\b", r"\bkeep (?:it|this) secret\b", r"\bno one else\b"),
     "fear": (r"\barrest(?:ed)?\b", r"\binvestigation\b", r"\blegal action\b", r"\baccount (?:will be )?(?:blocked|frozen)\b", r"\bpenalty\b", r"\bthreat\b"),
     "financial": (r"\btransfer\b", r"\bsend (?:money|funds|payment)\b", r"\bpay(?:ment)?\b", r"\bupi\b", r"\bbeneficiary\b", r"\bverification amount\b"),
-    "otp": (r"\botp\b", r"one[- ]time pass(?:word|code)", r"verification code"),
+    "otp": (r"\botp\b", r"one[- ]time pass(?:word|code)", r"verification code", r"six[- ]digit code", r"code (?:sent|delivered) to (?:your )?(?:phone|mobile)", r"authentication code", r"security code"),
     "credential": (r"\bpassword\b", r"\bpin\b", r"\bcvv\b", r"login details", r"credentials?"),
     "remote": (r"\bscreen share\b", r"\bshare (?:your )?screen\b", r"\bremote access\b", r"\binstall (?:this |the )?(?:app|application|anydesk|teamviewer)\b"),
     "beneficiary": (r"\bnew beneficiary\b", r"\badd (?:a )?beneficiary\b", r"\bnew account\b"),
     "authority": (r"\bcfo\b", r"\bceo\b", r"\bdirector\b", r"\bmanager\b", r"\bpolice\b", r"\bcbi\b", r"\bgovernment\b", r"\bofficer\b"),
     "bank": (r"\b(?:from|calling from|representing) (?:your |the )?bank\b", r"\b(?:your|the) bank\b", r"\bbank (?:agent|officer|team)\b", r"\bkyc\b"),
     "kyc": (r"\bkyc\b", r"know your customer"),
+    "family": (r"\b(?:your )?(?:son|daughter|brother|sister|mother|father|husband|wife|relative)\b", r"\b(?:mom|dad|mummy|papa)\b"),
+    "emergency": (r"\bemergency\b", r"\baccident\b", r"\bhospital\b", r"\bin trouble\b", r"\bneed help\b"),
+    "tech_support": (r"\btech(?:nical)? support\b", r"\bsupport (?:agent|team)\b", r"\bfrom microsoft\b"),
+    "device_problem": (r"\b(?:device|computer|account|phone) (?:has |is )?(?:infected|compromised|blocked|locked|hacked)\b", r"\bvirus\b"),
 }
 
 
@@ -57,6 +61,8 @@ def analyze_context(transcript: str) -> ContextAnalysis:
     authority = _hit(text, ["authority"])
     bank = _hit(text, ["bank"])
     kyc = _hit(text, ["kyc"])
+    family, emergency = _hit(text, ["family"]), _hit(text, ["emergency"])
+    tech_support, device_problem = _hit(text, ["tech_support"]), _hit(text, ["device_problem"])
     amount, currency = _amount(text)
 
     identity = None
@@ -75,6 +81,10 @@ def analyze_context(transcript: str) -> ContextAnalysis:
         events.append({"event": event, "severity": severity, "confidence": confidence, "source": "context_engine"})
     if authority or bank: add("AUTHORITY_CLAIM", "MEDIUM", .88)
     if kyc: add("KYC_PRETEXT", "HIGH", .90)
+    if family: add("FAMILY_CLAIM", "MEDIUM", .85)
+    if emergency: add("EMERGENCY_CLAIM", "HIGH", .90)
+    if tech_support: add("TECH_SUPPORT_CLAIM", "MEDIUM", .88)
+    if device_problem: add("DEVICE_ACCOUNT_PROBLEM", "HIGH", .88)
     if urgency: add("URGENCY_DETECTED", "HIGH", urgency)
     if secrecy: add("SECRECY_REQUEST", "HIGH", secrecy)
     if fear: add("THREAT_COERCION", "HIGH", fear)

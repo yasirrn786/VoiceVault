@@ -31,11 +31,11 @@ type Transcript = { timestamp: number; text: string; confidence: number };
 type AnalysisUpdate = {
   type: 'analysis_update'; session_id: string; timestamp: number; transcript: { text: string; confidence: number };
   context: { context_risk: number; action_risk: number; claimed_identity?: string; amount?: number; currency?: string };
-  signals: { synthetic_voice_risk: { synthetic_score: number | null; label: string }; speaker: { speaker_similarity: number | null; speaker_match: boolean | 'unknown' }; liveness: { liveness_risk: number | null; label: string }; audio_quality: { score: number; status: string } | null };
+  signals: { synthetic_voice_risk: { synthetic_score: number | null; label: string; model?: string; device?: string; latency_ms?: number }; aasist?: { synthetic_score: number | null; label: string; model?: string; device?: string; latency_ms?: number; raw_score?: number }; antispoof_ensemble?: { synthetic_score: number | null; classification: string; status: string; strategy: string }; speaker: { speaker_similarity: number | null; speaker_match: boolean | 'unknown'; latency_ms?: number }; liveness: { liveness_risk: number | null; label: string }; audio_quality: { score: number; status: string } | null; decision_reasons?: string[] };
   trust_score: number; risk_score: number; trust_band: string; policy_decision: string; policy_reasons: string[]; attack_chain?: string; events: SecurityEvent[]; model_health: Record<string, string>;
 };
 
-const initialHealth = { Whisper: 'STANDBY', Deepfake: 'UNAVAILABLE', Speaker: 'DEGRADED', Liveness: 'UNAVAILABLE', Gemini: 'NOT_CONFIGURED' };
+const initialHealth = { Whisper: 'STANDBY', Wav2Vec2: 'STANDBY', AASIST: 'STANDBY', ECAPA: 'STANDBY', Gemini: 'NOT_CONFIGURED', Liveness: 'UNAVAILABLE' };
 
 export default function Home() {
   const [live, setLive] = useState(false);
@@ -51,6 +51,7 @@ export default function Home() {
   const [events, setEvents] = useState<SecurityEvent[]>([]);
   const [timeline, setTimeline] = useState([{ time: 0, trust: 88 }]);
   const [health, setHealth] = useState<Record<string, string>>(initialHealth);
+  const [healthDetails, setHealthDetails] = useState<Record<string, { status: string; device?: string }>>({});
   const [signals, setSignals] = useState({ synthetic: null as number | null, speaker: null as number | null, liveness: null as number | null, context: 0, action: 0, quality: 1 });
   const [error, setError] = useState<string | null>(null);
   const [challenge, setChallenge] = useState<string | null>(null);
@@ -66,6 +67,8 @@ export default function Home() {
   const [enrollmentResult, setEnrollmentResult] = useState<string | null>(null);
   const [debugFile, setDebugFile] = useState<File | null>(null);
   const [debugResult, setDebugResult] = useState<Record<string, unknown> | null>(null);
+  const [decisionReasons, setDecisionReasons] = useState<string[]>([]);
+  const [modelEvidence, setModelEvidence] = useState<AnalysisUpdate['signals'] | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const audioRef = useRef<AudioStreamHandle | null>(null);
   const enrollmentAudioRef = useRef<AudioStreamHandle | null>(null);
@@ -77,6 +80,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => { void loadSpeakers(); }, [loadSpeakers]);
+  useEffect(() => { fetch(`${API_URL}/api/model-health`).then((response) => response.json()).then((data) => { setHealthDetails(data); setHealth(Object.fromEntries(Object.entries(data).map(([name, value]) => [name, (value as { status: string }).status]))); }).catch(() => undefined); }, []);
 
   const startEnrollment = useCallback(async () => {
     setError(null); setEnrollmentResult(null); setEnrollmentSeconds(0); enrollmentChunksRef.current = [];
@@ -116,6 +120,12 @@ export default function Home() {
     setSessionId(update.session_id); setTrust(update.trust_score); setBand(update.trust_band);
     setPolicy(update.policy_decision); setPolicyReasons(update.policy_reasons); setAttack(update.attack_chain || null);
     setHealth(update.model_health); setEvents((current) => [...update.events, ...current].slice(0, 60));
+    setDecisionReasons(update.signals.decision_reasons || update.policy_reasons); setModelEvidence(update.signals);
+    setHealthDetails((current) => ({ ...current,
+      Wav2Vec2: { status: update.model_health.Wav2Vec2, device: update.signals.synthetic_voice_risk.device },
+      AASIST: { status: update.model_health.AASIST, device: update.signals.aasist?.device },
+      ECAPA: { status: update.model_health.ECAPA, device: (update.signals.speaker as { device?: string }).device },
+    }));
     if (update.transcript.text) setTranscript((current) => [...current, { timestamp: update.timestamp, text: update.transcript.text, confidence: update.transcript.confidence }]);
     setTimeline((current) => [...current, { time: Math.round(update.timestamp), trust: update.trust_score }].slice(-30));
     setSignals({
@@ -257,6 +267,7 @@ export default function Home() {
               <div className="mt-4 flex flex-wrap gap-2"><Button onClick={live ? stop : start} disabled={busy} className={live ? 'bg-red-500 text-white hover:bg-red-400' : 'bg-purple-500 text-white hover:bg-purple-400'}>{live ? <><CircleStop /> Stop Analysis</> : <><Mic /> {busy ? 'Connecting…' : 'Start Analysis'}</>}</Button><Button variant="outline" onClick={startChallenge} className="border-purple-500/30 bg-transparent text-purple-200 hover:bg-purple-500/10"><LockKeyhole /> Challenge Caller</Button><Button variant="outline" onClick={createIncident} className="border-white/10 bg-transparent text-slate-200"><FileWarning /> Create Incident</Button><Button variant="outline" onClick={() => setDebugDialog(true)} className="border-white/10 bg-transparent text-slate-200"><TerminalSquare /> Test audio</Button><Button variant="ghost" onClick={reset} className="text-[#8d87a3]"><RefreshCw /> Reset</Button></div>
             </Card>
           </section>
+          <section className="grid gap-5 xl:grid-cols-2"><Card><details open><summary className="cursor-pointer text-sm font-semibold uppercase tracking-wider text-purple-300">Why this decision?</summary><div className="mt-4"><h3 className="text-xl font-semibold">{band} RISK</h3>{decisionReasons.length ? <ul className="mt-3 space-y-2 text-sm text-slate-300">{decisionReasons.map((reason) => <li key={reason}>• {reason}</li>)}</ul> : <p className="mt-3 text-sm text-[#8d87a3]">No material risk evidence has been observed.</p>}</div></details></Card><Card><details><summary className="cursor-pointer text-sm font-semibold uppercase tracking-wider text-purple-300">Advanced model evidence</summary><pre className="mt-4 max-h-72 overflow-auto rounded-lg bg-[#090518] p-4 text-xs leading-5 text-purple-200">{modelEvidence ? JSON.stringify({ wav2vec2: modelEvidence.synthetic_voice_risk, aasist: modelEvidence.aasist, ensemble: modelEvidence.antispoof_ensemble, speaker: modelEvidence.speaker }, null, 2) : 'Run live analysis to populate real model diagnostics.'}</pre></details></Card></section>
 
           <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
             {riskRows.map(([label, value, special]) => <RiskCard key={label} label={label} value={value} special={special} />)}
@@ -288,7 +299,7 @@ export default function Home() {
               </Card>
               <Card>
                 <div className="section-heading"><div><p className="eyebrow">MODEL HEALTH</p><h2>Detection subsystems</h2></div><TerminalSquare className="size-5 text-purple-400" /></div>
-                <div className="space-y-3">{Object.entries(health).map(([name, status]) => <div key={name} className="flex items-center justify-between border-b border-white/5 pb-2 text-sm"><span className="text-slate-300">{name}</span><span className={status === 'ONLINE' ? 'text-emerald-400' : status === 'UNAVAILABLE' || status === 'OFFLINE' ? 'text-red-400' : 'text-amber-300'}>{status}</span></div>)}</div>
+                <div className="space-y-3">{Object.entries(health).map(([name, status]) => <div key={name} className="flex items-center justify-between border-b border-white/5 pb-2 text-sm"><span className="text-slate-300">{name}</span><span className={status === 'READY' ? 'text-emerald-400' : status === 'UNAVAILABLE' || status === 'ERROR' ? 'text-red-400' : 'text-amber-300'}>{status}{healthDetails[name]?.device && healthDetails[name].device !== 'unresolved' ? ` / ${healthDetails[name].device.toUpperCase()}` : ''}</span></div>)}</div>
               </Card>
             </div>
           </section>

@@ -50,7 +50,7 @@ class DeepfakeDetector:
                 self._model.to(self.device)
                 self._model.eval()
                 self._torch = torch
-                self.health = "ONLINE"
+                self.health = "READY"
                 self.error = None
                 logger.info("Deepfake model loaded: %s on %s", self.model_name, self.device)
                 return True
@@ -78,6 +78,7 @@ class DeepfakeDetector:
                 "label": "unknown",
                 "status": "signal_degraded",
                 "model": self.model_name,
+                "device": self.device,
                 "latency_ms": round((perf_counter() - started) * 1000, 2),
             }
         if not self._load():
@@ -87,6 +88,7 @@ class DeepfakeDetector:
                 "label": "unknown",
                 "status": "unavailable",
                 "model": self.model_name,
+                "device": self.device,
                 "latency_ms": round((perf_counter() - started) * 1000, 2),
                 "error": self.error,
             }
@@ -114,6 +116,7 @@ class DeepfakeDetector:
                 "label": "synthetic" if synthetic_score >= settings.deepfake_threshold else "genuine",
                 "status": "ok",
                 "model": self.model_name,
+                "device": self.device,
                 "latency_ms": round((perf_counter() - started) * 1000, 2),
             }
         except Exception as exc:
@@ -126,6 +129,7 @@ class DeepfakeDetector:
                 "label": "unknown",
                 "status": "unavailable",
                 "model": self.model_name,
+                "device": self.device,
                 "latency_ms": round((perf_counter() - started) * 1000, 2),
                 "error": self.error,
             }

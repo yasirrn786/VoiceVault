@@ -10,6 +10,7 @@ from app.api.incidents import router as incidents_router
 from app.api.live import router as live_router
 from app.config import settings
 from app.models.deepfake import deepfake_detector
+from app.models.aasist import aasist_detector
 from app.models.liveness import liveness_detector
 from app.models.speaker import speaker_verifier
 from app.services.gemini_context import context_engine
@@ -36,6 +37,7 @@ async def report_runtime() -> None:
         logger.info("CUDA available: False | GPU name: unavailable (%s)", exc)
     logger.info("Whisper device: %s", settings.whisper_device)
     logger.info("Deepfake model device: %s", settings.deepfake_device)
+    logger.info("AASIST model device: %s", settings.aasist_device)
     logger.info("Speaker model device: %s", settings.speaker_device)
 
 
@@ -48,8 +50,9 @@ async def health() -> dict[str, str]:
 async def model_health() -> dict[str, object]:
     return {
         "Whisper": {"status": transcriber.health, "model": f"faster-whisper/{settings.whisper_model}", "device": transcriber.device},
-        "Deepfake": {"status": deepfake_detector.health, "model": deepfake_detector.model_name, "device": deepfake_detector.device, "error": deepfake_detector.error},
-        "Speaker": {"status": speaker_verifier.health, "model": speaker_verifier.model_name, "device": speaker_verifier.device, "error": speaker_verifier.error},
+        "Wav2Vec2": {"status": deepfake_detector.health, "model": deepfake_detector.model_name, "device": deepfake_detector.device, "error": deepfake_detector.error},
+        "AASIST": {"status": aasist_detector.health, "model": aasist_detector.model_name, "checkpoint": aasist_detector.checkpoint_version, "device": aasist_detector.device, "error": aasist_detector.error},
+        "ECAPA": {"status": speaker_verifier.health, "model": speaker_verifier.model_name, "device": speaker_verifier.device, "error": speaker_verifier.error},
         "Liveness": {"status": liveness_detector.health, "model": liveness_detector.model_name},
         "Gemini": {"status": context_engine.health},
     }

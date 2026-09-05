@@ -16,10 +16,17 @@ class AttackChainTracker:
         if context.otp_request: self.flags.add("OTP")
         if context.remote_access_request: self.flags.add("REMOTE")
         if context.new_beneficiary: self.flags.add("BENEFICIARY")
+        event_names = {event.get("event") for event in context.events}
+        if "FAMILY_CLAIM" in event_names: self.flags.add("FAMILY")
+        if "EMERGENCY_CLAIM" in event_names: self.flags.add("EMERGENCY")
+        if "TECH_SUPPORT_CLAIM" in event_names: self.flags.add("TECH_SUPPORT")
+        if "DEVICE_ACCOUNT_PROBLEM" in event_names: self.flags.add("DEVICE_PROBLEM")
 
         if {"AUTHORITY", "URGENCY", "SECRECY", "FINANCIAL"} <= self.flags: return "CEO_FRAUD"
         if {"BANK", "OTP"} <= self.flags: return "OTP_HARVESTING"
-        if {"AUTHORITY", "FEAR", "SECRECY", "FINANCIAL"} <= self.flags: return "DIGITAL_ARREST"
+        if {"FAMILY", "EMERGENCY", "URGENCY", "FINANCIAL"} <= self.flags: return "FAMILY_IMPERSONATION_FRAUD"
+        if {"AUTHORITY", "FEAR", "SECRECY", "FINANCIAL"} <= self.flags: return "AUTHORITY_EXTORTION"
+        if {"TECH_SUPPORT", "DEVICE_PROBLEM", "REMOTE"} <= self.flags: return "REMOTE_ACCESS_SCAM"
         if "REMOTE" in self.flags: return "REMOTE_ACCESS_SCAM"
         return None
 

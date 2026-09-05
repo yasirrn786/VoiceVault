@@ -5,6 +5,7 @@ from app.services.incidents import hash_event, verify_chain
 from app.services.policy import evaluate_policy
 from app.services.trust import TrustEngine
 from app.services.session_manager import SessionManager
+from app.models.antispoof_ensemble import fuse_antispoof
 
 
 def test_trust_fusion_smooths_and_declines() -> None:
@@ -44,3 +45,19 @@ async def test_challenge_preserves_requested_action() -> None:
     state = manager.get(update.session_id).state
     assert state.attack_state["amount"] == 800000
     assert state.attack_state["requested_action"]["type"] == "bank_transfer"
+
+
+def test_family_and_authority_attack_chains() -> None:
+    family = AttackChainTracker().update(analyze_context("I am your son. This is an emergency, urgently send money."))
+    authority = AttackChainTracker().update(analyze_context("I am a police officer. Do not tell anyone or your account will be blocked. Pay now."))
+    assert family == "FAMILY_IMPERSONATION_FRAUD"
+    assert authority == "AUTHORITY_EXTORTION"
+
+
+def test_antispoof_disagreement_requires_verification() -> None:
+    result = fuse_antispoof(
+        {"status": "ok", "synthetic_score": .91, "label": "synthetic", "confidence": .91},
+        {"status": "ok", "synthetic_score": .18, "label": "genuine", "confidence": .82},
+    )
+    assert result["classification"] == "disagreement"
+    assert result["status"] == "verify"

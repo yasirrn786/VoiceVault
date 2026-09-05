@@ -20,6 +20,7 @@ class ContextEngine:
             return fallback
         try:
             from google import genai
+            from google.genai import types
             client = genai.Client(api_key=settings.gemini_api_key)
             prompt = (
                 "Analyze this call transcript for social-engineering risk. Return only JSON with keys "
@@ -27,7 +28,12 @@ class ContextEngine:
                 "new_beneficiary, otp_request, credential_request, remote_access_request, action_type, "
                 "authority_claim, bank_impersonation, context_risk. Transcript: " + transcript
             )
-            response = await asyncio.to_thread(client.models.generate_content, model="gemini-2.5-flash-lite", contents=prompt)
+            response = await asyncio.to_thread(
+                client.models.generate_content,
+                model="gemini-2.5-flash-lite",
+                contents=prompt,
+                config=types.GenerateContentConfig(response_mime_type="application/json"),
+            )
             raw = (response.text or "{}").strip().removeprefix("```json").removesuffix("```").strip()
             data = json.loads(raw)
             merged = fallback.model_dump()
@@ -35,7 +41,7 @@ class ContextEngine:
                 if key not in {"events", "source", "action_risk"} and data[key] is not None:
                     merged[key] = data[key]
             merged["source"] = "gemini+rules"
-            self.health = "ONLINE"
+            self.health = "READY"
             return ContextAnalysis.model_validate(merged)
         except Exception:
             self.health = "UNAVAILABLE"

@@ -7,6 +7,7 @@ from app.services.context import analyze_context
     ("I am calling from your bank. Your KYC will expire today. Tell me the OTP.", "OTP_REQUEST"),
     ("This is CBI. You are under investigation. Do not contact anybody. Transfer the verification amount now.", "THREAT_COERCION"),
     ("Install this app and share your screen so I can fix your bank account.", "REMOTE_ACCESS_REQUEST"),
+    ("Read the six-digit security code sent to your phone immediately.", "OTP_REQUEST"),
 ])
 def test_scam_scenarios(text: str, event: str) -> None:
     result = analyze_context(text)

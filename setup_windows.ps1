@@ -31,6 +31,20 @@ if (-not $CpuOnly) {
 }
 & $python -m pip install -r (Join-Path $root "backend\requirements-models.txt")
 
+$aasistDir = Join-Path $root "backend\data\models\aasist"
+$aasistCheckpoint = Join-Path $aasistDir "AASIST.pth"
+$aasistExpectedHash = "51d2d9cf0738172f61e2a384ec50a54a55363240f67c971ed55a92435bc1a1c0"
+New-Item -ItemType Directory -Force -Path $aasistDir | Out-Null
+if (-not (Test-Path $aasistCheckpoint)) {
+    Write-Host "Downloading the official clovaai/AASIST checkpoint..." -ForegroundColor Yellow
+    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/clovaai/aasist/main/models/weights/AASIST.pth" -OutFile $aasistCheckpoint
+}
+$aasistActualHash = (Get-FileHash $aasistCheckpoint -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($aasistActualHash -ne $aasistExpectedHash) {
+    throw "AASIST checkpoint SHA-256 mismatch. Expected $aasistExpectedHash, got $aasistActualHash"
+}
+Write-Host "AASIST checkpoint verified: $aasistActualHash" -ForegroundColor Green
+
 Push-Location (Join-Path $root "frontend")
 try {
     npm install

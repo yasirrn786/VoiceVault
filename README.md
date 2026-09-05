@@ -6,9 +6,11 @@ VoiceVault is a local-first Zero-Trust voice-risk prototype. It combines speech 
 
 - FastAPI HTTP/WebSocket backend and the existing React/Vinext dashboard.
 - Browser microphone capture at 16 kHz PCM, bounded rolling three-second analysis windows, and no repeated inference on near-identical packets.
-- Concurrent Whisper, deepfake, and speaker tasks for each usable live window.
+- Concurrent Whisper, Wav2Vec2, AASIST, and ECAPA tasks for each usable live window.
 - `faster-whisper/base.en`, lazy loaded; CUDA is selected automatically when supported and CPU remains a safe fallback.
 - Real local deepfake inference using `garystafford/wav2vec2-deepfake-voice-detector` (a Wav2Vec2 audio classifier, not AASIST). It reports model name, probability, confidence, status, and latency only from actual inference.
+- Official `clovaai/AASIST` architecture and pretrained ASVspoof2019-LA checkpoint, strictly state-dictionary validated and run locally. The softmax display score is uncalibrated; the raw bona fide logit is preserved.
+- Experimental conservative Wav2Vec2+AASIST evidence fusion with explicit disagreement/verify handling.
 - Real `speechbrain/spkrec-ecapa-voxceleb` ECAPA-TDNN enrollment and cosine verification. The old spectral embedding is retained only as a clearly degraded fallback.
 - Dashboard model health states, CUDA/device runtime endpoint (`GET /api/model-health`), speaker enrollment/selection UI, and WAV/MP3 developer deepfake test UI.
 - Rules-based social-engineering events (authority, KYC pretext, urgency, secrecy, OTP, finance, remote access), attack chains, CVTF, policy recommendations, and hash-chained incidents.
@@ -32,6 +34,7 @@ VoiceVault is a local-first Zero-Trust voice-risk prototype. It combines speech 
 |---|---|---|
 | Transcription | `faster-whisper/base.en` | Lazy, CUDA/CPU fallback |
 | Synthetic voice | `garystafford/wav2vec2-deepfake-voice-detector` | Local Wav2Vec2 inference |
+| Anti-spoof | official `clovaai/AASIST` | Local CUDA/CPU inference; ASVspoof2019-LA checkpoint |
 | Speaker identity | `speechbrain/spkrec-ecapa-voxceleb` | Local ECAPA-TDNN, spectral fallback only on failure |
 | Context | rules + optional `gemini-2.5-flash-lite` | Gemini optional; rules always available |
 | Liveness | no model configured | Unknown / unavailable |
@@ -50,7 +53,7 @@ Copy-Item .env.example .env
 - API health: <http://127.0.0.1:8000/health>
 - API docs: <http://127.0.0.1:8000/docs>
 
-Important `.env` values include `DEEPFAKE_MODEL`, `DEEPFAKE_DEVICE=auto`, `SPEAKER_MODEL`, `SPEAKER_DEVICE=auto`, `SPEAKER_SIMILARITY_THRESHOLD`, `WHISPER_DEVICE=auto`, and `WHISPER_COMPUTE_TYPE=auto`. Never commit real API keys.
+Important `.env` values include `DEEPFAKE_MODEL`, `DEEPFAKE_DEVICE=auto`, `AASIST_CHECKPOINT`, `AASIST_DEVICE=auto`, `SPEAKER_MODEL`, `SPEAKER_DEVICE=auto`, `SPEAKER_SIMILARITY_THRESHOLD`, `WHISPER_DEVICE=auto`, and `WHISPER_COMPUTE_TYPE=auto`. Put `GEMINI_API_KEY` only in the ignored `.env`; never commit real API keys.
 
 ## Demo workflow
 
@@ -61,7 +64,7 @@ Important `.env` values include `DEEPFAKE_MODEL`, `DEEPFAKE_DEVICE=auto`, `SPEAK
 
 ## Verification performed
 
-- `backend/.venv/Scripts/python.exe -m pytest backend/tests -q` — 13 passed.
+- See `docs/EVALUATION.md`; VoiceVault is **NOT EVALUATED on ASVspoof5**.
 - `npm run build` in `frontend` — passed.
 - `GET /health` — healthy.
 - Live WebSocket test with correctly sampled local Windows TTS: Whisper produced “Hello, how are you? This synthetic”; deepfake returned a real synthetic result; ECAPA returned same-speaker similarity `0.8957` and a match for its enrolled fixture.

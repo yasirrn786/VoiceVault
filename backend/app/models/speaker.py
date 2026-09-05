@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from time import perf_counter
 from pathlib import Path
 
 import numpy as np
@@ -72,7 +73,7 @@ class SpeakerVerifier:
                     local_strategy=LocalStrategy.COPY,
                 )
                 self._torch = torch
-                self.health = "ONLINE"
+                self.health = "READY"
                 self.error = None
                 logger.info("Speaker model loaded: %s on %s", self.model_name, self.device)
                 return True
@@ -112,15 +113,17 @@ class SpeakerVerifier:
         return settings.data_dir / "embeddings" / f"{safe_id}.json"
 
     def enroll(self, speaker_id: str, audio: bytes) -> dict[str, object]:
+        started = perf_counter()
         embedding, model = self._embedding(audio)
         if embedding is None:
             return {"speaker_id": speaker_id, "embedding_status": "insufficient_audio", "model": model}
         target = self._target(speaker_id)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps({"model": model, "embedding": embedding.tolist()}), encoding="utf-8")
-        return {"speaker_id": speaker_id, "embedding_status": "stored", "model": model, "health": self.health}
+        return {"speaker_id": speaker_id, "embedding_status": "stored", "model": model, "health": self.health, "device": self.device, "latency_ms": round((perf_counter()-started)*1000, 2)}
 
     def verify(self, speaker_id: str | None, audio: bytes) -> dict[str, object]:
+        started = perf_counter()
         if not speaker_id:
             return {"speaker_similarity": None, "speaker_match": "unknown", "model": self.model_name}
         target = self._target(speaker_id)
@@ -136,9 +139,13 @@ class SpeakerVerifier:
             return {"speaker_similarity": None, "speaker_match": "unknown", "model": model}
         similarity = float(np.dot(enrolled, embedding) / denominator)
         return {
+            "claimed_speaker": speaker_id,
             "speaker_similarity": round(similarity, 4),
             "speaker_match": similarity >= settings.speaker_threshold,
+            "threshold": settings.speaker_threshold,
             "model": model,
+            "device": self.device,
+            "latency_ms": round((perf_counter()-started)*1000, 2),
         }
 
 

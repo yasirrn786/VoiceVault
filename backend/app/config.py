@@ -30,6 +30,10 @@ class Settings:
     )
     deepfake_device: str = os.getenv("DEEPFAKE_DEVICE", "auto")
     deepfake_threshold: float = _float("DEEPFAKE_THRESHOLD", 0.50)
+    aasist_checkpoint: str = os.getenv(
+        "AASIST_CHECKPOINT", str(BASE_DIR / "data" / "models" / "aasist" / "AASIST.pth")
+    )
+    aasist_device: str = os.getenv("AASIST_DEVICE", "auto")
     speaker_model: str = os.getenv(
         "SPEAKER_MODEL", "speechbrain/spkrec-ecapa-voxceleb"
     )

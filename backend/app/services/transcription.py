@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+from time import perf_counter
 from threading import Lock
 
 from app.config import settings
@@ -20,7 +21,7 @@ class Transcriber:
 
     @property
     def health(self) -> str:
-        return "ONLINE" if self.model is not None else "DEGRADED" if self.error else "STANDBY"
+        return "READY" if self.model is not None else "ERROR" if self.error else "STANDBY"
 
     def _requested_device(self) -> str:
         requested = settings.whisper_device.strip().lower()
@@ -63,9 +64,10 @@ class Transcriber:
                 logger.exception("faster-whisper unavailable")
 
     def transcribe_pcm(self, audio: bytes) -> dict[str, object]:
+        started = perf_counter()
         self._load()
         if self.model is None:
-            return {"text": "", "language": "en", "confidence": 0.0, "status": "unavailable"}
+            return {"text": "", "language": "en", "confidence": 0.0, "status": "unavailable", "latency_ms": round((perf_counter()-started)*1000, 2)}
         path = ""
         try:
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as handle:
@@ -77,10 +79,10 @@ class Transcriber:
             text = " ".join(item.text.strip() for item in items).strip()
             avg_logprob = sum(item.avg_logprob for item in items) / len(items) if items else -5.0
             confidence = max(0.0, min(1.0, 1.0 + avg_logprob / 5.0))
-            return {"text": text, "language": info.language or "en", "confidence": round(confidence, 3), "status": "ok"}
+            return {"text": text, "language": info.language or "en", "confidence": round(confidence, 3), "status": "ok", "model": f"faster-whisper/{settings.whisper_model}", "device": self.device, "latency_ms": round((perf_counter()-started)*1000, 2)}
         except Exception:
             logger.exception("Transcription failed")
-            return {"text": "", "language": "en", "confidence": 0.0, "status": "error"}
+            return {"text": "", "language": "en", "confidence": 0.0, "status": "error", "latency_ms": round((perf_counter()-started)*1000, 2)}
         finally:
             if path:
                 try:

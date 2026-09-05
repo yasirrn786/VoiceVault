@@ -9,6 +9,8 @@ import numpy as np
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 
 from app.models.deepfake import deepfake_detector
+from app.models.aasist import aasist_detector
+from app.models.antispoof_ensemble import fuse_antispoof
 from app.schemas.responses import ContextRequest
 from app.services.audio import check_quality, float_to_pcm16
 from app.services.session_manager import session_manager
@@ -45,8 +47,12 @@ async def deepfake_debug_endpoint(audio: UploadFile = File(...)):
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Could not decode {audio.filename or 'audio'}: {exc}") from exc
     quality = check_quality(mono)
-    result = await asyncio.to_thread(deepfake_detector.analyze, float_to_pcm16(mono), quality.status == "good")
-    return {"audio_quality": quality.__dict__, **result}
+    pcm = float_to_pcm16(mono)
+    wav2vec2, aasist = await asyncio.gather(
+        asyncio.to_thread(deepfake_detector.analyze, pcm, quality.status == "good"),
+        asyncio.to_thread(aasist_detector.analyze, pcm, quality.status == "good"),
+    )
+    return {"audio_quality": quality.__dict__, "wav2vec2": wav2vec2, "aasist": aasist, "ensemble": fuse_antispoof(wav2vec2, aasist)}
 
 
 @router.websocket("/ws/live-analysis")
